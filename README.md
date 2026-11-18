@@ -50,9 +50,11 @@ Each tooth is thinner than nominal by `j/2` at the pitch circle. Two gears
 made with the same `j` mesh with a circular backlash of `j`.
 
 Tooth 0 is centred on the gear's local +X axis. Tooth `k` is centred at
-angle `k*tau/z`. Each flank is an involute of the base circle from `rb` to
-`ra`. Below `rb`, each flank continues as a radial line at angle `psi_b`.
-The tip is an arc of radius `ra`. The root is an arc of radius `rf`.
+angle `k*tau/z`. Each flank is an involute of the base circle from
+`max[rb, rf]` to `ra`. Below `rb`, each flank continues as a radial line at
+angle `psi_b`. The tip is an arc of radius `ra`. The root is an arc of radius
+`rf`. For `z >= 42` at `alpha = 20°`, the root circle lies outside the base
+circle. Then the root circle cuts the involute, and there is no radial part.
 
 The profile has no undercut model. Use `z >= 18` with `alpha = 20°`.
 
@@ -207,11 +209,14 @@ compiles `train.curv` for the GPU with `curv -o gpu`. It exits with status
 
 `tests/instruments.curv`
 : `minimize` and `clearance` from `support.curv` give the known answers for
-  circles. A failure here means that the measurement is wrong, not the gears.
+  circles. The circle fields include fields that understate the distance,
+  as the gear fields may. A failure here means that the measurement is
+  wrong, not the gears.
 
 `tests/geometry.curv`
-: The radii match the formulas. Points on the involute, computed from the
-  textbook parametric form, have `abs(field) < 1e-9*m`. The tooth tip, the
+: The radii match the formulas. Points on the involute between `max[rb, rf]`
+  and `ra`, computed from the textbook parametric form, have
+  `abs(field) < 1e-9*m`. The tooth tip, the
   root and the pitch-circle tooth thickness are on the zero set. The `profile`
   shape gives the same values for every tooth and both flanks.
 
@@ -221,12 +226,21 @@ compiles `train.curv` for the GPU with `curv -o gpu`. It exits with status
   bore and holes. The test covers `field`, `profile` and `body`.
 
 `tests/mesh.curv`
-: For pairs of gears built with `mesh`, the minimum of `fA + fB` over the
-  mesh zone is the clearance. It must lie between `s/lip_max - eps` and
-  `s + eps`, where `eps = 2e-3*m` and `lip_max` is the larger `lip` of the
-  pair. The test samples one tooth pitch of the driver's rotation. It
-  covers tooth counts from 18 to 60, two modules, and backlash 0, `0.05*m`
-  and `0.15*m`. A clearance below zero would mean the teeth overlap.
+: For pairs of gears built with `mesh`, the test measures the clearance.
+  It must lie between `s/lip_max - eps` and `s + eps`, where
+  `eps = 2e-3*m` and `lip_max` is the larger `lip` of the pair. The test
+  samples one tooth pitch of the driver's rotation. It covers tooth counts
+  from 18 to 60, two modules, and backlash 0, `0.05*m` and `0.15*m`. A
+  clearance below zero would mean the teeth overlap.
+
+  The clearance is the smallest value of B's field on the boundary of A,
+  or of A's field on the boundary of B, inside the mesh zone. The test finds
+  boundary points by bisection along rays from the gear centre. Each ray
+  crosses the profile once, because the flank angle decreases as the
+  radius grows. A field that understates the distance can only make this
+  value smaller, by at most its `lip` factor. The sum `fA + fB` is not a
+  valid measure here: deep inside B, B's field is about `-d` and A's field
+  is about `d/lip`, so the sum goes below zero without any overlap.
 
 `tests/train.curv`
 : The centre distances, the coaxial angles and the output ratio match the
