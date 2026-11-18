@@ -1,0 +1,78 @@
+// Meshing: gears placed with `mesh` keep the clearance that the involute
+// tooth form predicts, s = j*cos(alpha)/2, at every time. A negative
+// clearance would mean overlapping teeth.
+let
+    S = file "support.curv";
+    G = file "../gear.curv";
+
+    alpha = 20*deg;
+    pairs = [[18, 18], [18, 60], [25, 41], [60, 60]];
+    modules = [1, 2.5];
+    backlashes = [0, 0.05, 0.15];   // in modules
+    samples = 6;
+    omega = 0.9;                     // driver angular velocity
+
+    check_pair {za, zb, m, j, dir} =
+        let ga = G.spur {m: m, z: za, backlash: j};
+            gb = G.spur {m: m, z: zb, backlash: j};
+            A = G.place {
+                gear: ga,
+                centre: [1, 2],
+                angle: t -> omega*t + 0.2,
+                z0: 0,
+                width: 1,
+                bore: 0,
+            };
+            B = G.mesh {
+                driver: A,
+                gear: gb,
+                direction: dir,
+                z0: 0,
+                width: 1,
+                bore: 0,
+            };
+            pa = G.profile A;
+            pb = G.profile B;
+            name = "za=$(za) zb=$(zb) m=$(m) j=$(j) direction=$(dir)";
+            s = j*cos(alpha)/2;
+            lip_max = max[ga.lip, gb.lip];
+            eps = 2e-3*m;
+            period = (tau/za)/omega;
+            phased t = dir + pi - pi/zb + (dir - A.angle t)*za/zb;
+        in do
+            exec(S.check [
+                S.near [mag(B.centre - A.centre), ga.rp + gb.rp, 1e-9*m]
+                    && mag(normalize(B.centre - A.centre) - cis dir) < 1e-9,
+                "$(name): driven centre $(B.centre)"]);
+            exec(S.check [B.gear.z == zb && B.gear.m == m && B.gear.backlash == j
+                    && B.z0 == 0 && B.width == 1 && B.bore == 0,
+                "$(name): driven gear fields not kept"]);
+            for (t in [0, 0.4, 3.3])
+                exec(S.check [S.near [B.angle t, phased t, 1e-9],
+                    "$(name): driven angle $(B.angle t) at time $(t), expected $(phased t)"]);
+            for (k in 0..<samples)
+                let t = period*k/samples;
+                    c = S.clearance {
+                        fa: p -> pa.dist[p.[X], p.[Y], 0, t],
+                        fb: p -> pb.dist[p.[X], p.[Y], 0, t],
+                        ca: A.centre,
+                        cb: B.centre,
+                        ra_a: ga.ra,
+                        ra_b: gb.ra,
+                        m: m,
+                    };
+                in exec(S.check [c >= s/lip_max - eps && c <= s + eps,
+                    "$(name): clearance $(c) at time $(t), expected $(s/lip_max) to $(s)"]);
+        in #true;
+
+    cases = [
+        for (pr in pairs)
+            for (m in modules)
+                for (jm in backlashes)
+                    {za: pr.[0], zb: pr.[1], m: m, j: jm*m},
+    ];
+in do
+    for (i in indices cases)
+        let c = cases.[i];
+        in exec(check_pair {...c, dir: 0.37*i - 2});
+in #true

@@ -1,0 +1,120 @@
+// Gear geometry: the radii, the involute flanks, the tip, the root and the
+// tooth thickness. The expected values come from the textbook formulas,
+// not from gear.curv.
+let
+    S = file "support.curv";
+    G = file "../gear.curv";
+
+    alpha = 20*deg;
+    inv a = tan a - a;
+
+    cases = [
+        {m: 1,    z: 18, j: 0},
+        {m: 2,    z: 25, j: 0.1},
+        {m: 0.75, z: 60, j: 0.05},
+        {m: 1.5,  z: 47, j: 0.3},
+    ];
+
+    // A point on the involute of a circle of radius rb, unwound
+    // counterclockwise from angle 0, at roll angle s.
+    involute [rb, s] = rb*[cos s + s*sin s, sin s - s*cos s];
+    rot [a, p] = cmul[p, cis a];
+    mirror_y [x, y] = [x, -y];
+    polar p = [mag p, phase p];
+
+    // The upper flank of tooth 0 is the involute mirrored in the X axis
+    // and turned so that it starts on the base circle at angle psi_b.
+    flank_point [rb, psi_b, s] = rot[psi_b, mirror_y(involute[rb, s])];
+
+    check_case c =
+        let g = G.spur {m: c.m, z: c.z, backlash: c.j};
+            name = "m=$(c.m) z=$(c.z) j=$(c.j)";
+            tol = 1e-12*c.m;
+            ftol = 1e-9*c.m;
+            rp = c.m*c.z/2;
+            rb = rp*cos alpha;
+            ra = rp + c.m;
+            rf = rp - 1.25*c.m;
+            psi_p = (pi*c.m/2 - c.j/2)/(2*rp);
+            psi_b = psi_p + inv alpha;
+            lip = sqrt(1 + (pi/c.z)^2);
+            s_max = sqrt(ra*ra - rb*rb)/rb;
+            centre = [3, -2];
+            pg = G.place {
+                gear: g,
+                centre: centre,
+                angle: t -> 0.3*t + 0.1,
+                z0: 0,
+                width: 5,
+                bore: 0,
+            };
+            prof = G.profile pg;
+        in do
+            exec(S.check [
+                g.m == c.m && g.z == c.z && g.backlash == c.j
+                    && S.near [g.alpha, alpha, 1e-15],
+                "$(name): the input fields are not kept"]);
+            for (f in [[#rp, rp], [#rb, rb], [#ra, ra], [#rf, rf],
+                       [#psi_p, psi_p], [#psi_b, psi_b], [#lip, lip]])
+                exec(S.check [S.near [g.[f.[0]], f.[1], tol],
+                    "$(name): $(f.[0]) is $(g.[f.[0]]), expected $(f.[1])"]);
+            exec(S.check [S.near [G.inv(0.3), tan 0.3 - 0.3, 1e-15],
+                "inv(0.3) is $(G.inv 0.3)"]);
+
+            // Both flanks of tooth 0 lie on the zero set.
+            for (k in 0..24)
+                let q = flank_point [rb, psi_b, s_max*k/24];
+                    v1 = g.field(polar q);
+                    v2 = g.field(polar(mirror_y q));
+                in exec(S.check [abs v1 < ftol && abs v2 < ftol,
+                    "$(name): flank point $(k): fields $(v1) and $(v2)"]);
+
+            // The tip, the root and the pitch-circle thickness.
+            exec(S.check [abs(g.field[ra, 0]) < ftol,
+                "$(name): tip field $(g.field[ra, 0])"]);
+            exec(S.check [abs(g.field[rf, pi/c.z]) < ftol,
+                "$(name): root field $(g.field[rf, pi/c.z])"]);
+            exec(S.check [abs(g.field[rp, psi_p]) < ftol,
+                "$(name): pitch-circle thickness field $(g.field[rp, psi_p])"]);
+
+            // Inside and outside.
+            exec(S.check [g.field[rp, 0] < 0, "$(name): tooth centre is outside"]);
+            exec(S.check [g.field[rp, pi/c.z] > 0, "$(name): gap centre is inside"]);
+            exec(S.check [g.field[0, 0] < 0, "$(name): gear centre is outside"]);
+            exec(S.check [g.field[ra + c.m, 0] > 0, "$(name): beyond the tip is inside"]);
+
+            // The profile shape: several teeth, both flanks, several times.
+            for (tooth in [0, 1, floor(c.z/2), c.z - 1])
+                for (time in [0, 1.7, 5.2])
+                    for (k in 0..6)
+                        let q = flank_point [rb, psi_b, s_max*k/6];
+                            turn = pg.angle time + tooth*tau/c.z;
+                        in for (side in [q, mirror_y q])
+                            let w = centre + rot[turn, side];
+                                v = prof.dist[w.[X], w.[Y], 0, time];
+                            in exec(S.check [abs v < ftol,
+                                "$(name): profile tooth $(tooth) time $(time) point $(k): $(v)"]);
+
+            // The profile agrees with the field at arbitrary points.
+            for (i in 0..40)
+                let rel = (2*[S.rand(2*i), S.rand(2*i + 1)] - 1)*1.2*ra;
+                    time = 3*S.rand(1000 + i);
+                    w = centre + rot[pg.angle time, rel];
+                    v = prof.dist[w.[X], w.[Y], 0, time];
+                    expect = g.field(polar rel);
+                in exec(S.check [S.near [v, expect, ftol],
+                    "$(name): profile $(v) differs from field $(expect) at $(rel)"]);
+
+            // The bounding box of the profile.
+            exec(S.check [prof.is_2d && not(prof.is_3d),
+                "$(name): the profile is not a 2D shape"]);
+            exec(S.check [
+                and [S.near [prof.bbox.[MIN,X], centre.[X] - ra, tol],
+                     S.near [prof.bbox.[MIN,Y], centre.[Y] - ra, tol],
+                     S.near [prof.bbox.[MAX,X], centre.[X] + ra, tol],
+                     S.near [prof.bbox.[MAX,Y], centre.[Y] + ra, tol]],
+                "$(name): profile bbox $(prof.bbox)"]);
+        in #true;
+in do
+    for (c in cases) exec(check_case c);
+in #true

@@ -1,0 +1,105 @@
+// The two-stage train: layout, shafts, angles, ratio, meshing and layers.
+let
+    S = file "support.curv";
+    G = file "../gear.curv";
+
+    alpha = 20*deg;
+    samples = 6;
+    h = 1e-3;   // time step for finite differences
+
+    configs = [
+        {m: 1.5, teeth: [18, 36, 20, 30], backlash: 0.12, speed: 0.6,
+         elbow: 75*deg, width: 6},
+        {m: 0.8, teeth: [40, 18, 18, 60], backlash: 0.04, speed: -1.3,
+         elbow: 140*deg, width: 3.2},
+    ];
+
+    rate [g, t] = (g.angle(t + h) - g.angle t)/h;
+
+    contains_box [outer, inner] =
+        and (outer.[MIN] <= inner.[MIN] + 1e-9)
+        && and (outer.[MAX] >= inner.[MAX] - 1e-9);
+
+    check_config cfg =
+        let tr = G.train cfg;
+            m = cfg.m;
+            [za, zb, zc, zd] = cfg.teeth;
+            [A, B, C, D] = tr.gears;
+            name = "train $(cfg.teeth) speed $(cfg.speed)";
+            tol = 1e-9*m;
+            layer2 = cfg.width + m;
+            s = cfg.backlash*cos(alpha)/2;
+            eps = 2e-3*m;
+        in do
+            exec(S.check [count(tr.gears) == 4 && tr.meshes == [[0, 1], [2, 3]],
+                "$(name): gears or meshes have the wrong shape"]);
+
+            // Gears, modules, backlash, bores, widths and layers.
+            for (i in 0..3)
+                let g = tr.gears.[i];
+                in exec(S.check [
+                    g.gear.z == cfg.teeth.[i] && g.gear.m == m
+                        && g.gear.backlash == cfg.backlash
+                        && S.near [g.bore, 2*m, tol] && g.width == cfg.width,
+                    "$(name): gear $(i) has the wrong parameters"]);
+            exec(S.check [A.z0 == 0 && B.z0 == 0
+                    && S.near [C.z0, layer2, tol] && S.near [D.z0, layer2, tol],
+                "$(name): layers $([A.z0, B.z0, C.z0, D.z0])"]);
+            exec(S.check [A.z0 + A.width < C.z0 && B.z0 + B.width < D.z0,
+                "$(name): the layers overlap in Z"]);
+
+            // Centres.
+            exec(S.check [mag(A.centre) < tol, "$(name): A centre $(A.centre)"]);
+            exec(S.check [mag(B.centre - [m*(za + zb)/2, 0]) < tol,
+                "$(name): B centre $(B.centre)"]);
+            exec(S.check [mag(C.centre - B.centre) < tol,
+                "$(name): C centre $(C.centre) is not on B's shaft"]);
+            exec(S.check [
+                mag(D.centre - (C.centre + m*(zc + zd)/2*cis(cfg.elbow))) < tol,
+                "$(name): D centre $(D.centre)"]);
+
+            // Angles and ratios.
+            for (t in [0, 0.8, 4.1])
+                exec(S.check [
+                    S.near [A.angle t, cfg.speed*t, 1e-12]
+                        && S.near [C.angle t, B.angle t, 1e-12],
+                    "$(name): A or C angle wrong at time $(t)"]);
+            exec(S.check [S.near [tr.ratio, za*zc/(zb*zd), 1e-12],
+                "$(name): ratio $(tr.ratio)"]);
+            for (t in [0.3, 2.9])
+                exec(S.check [
+                    S.near [rate[B, t]/rate[A, t], -za/zb, 1e-9]
+                        && S.near [rate[D, t]/rate[A, t], za*zc/(zb*zd), 1e-9],
+                    "$(name): measured ratios at time $(t)"]);
+
+            // Both meshes keep the involute clearance.
+            for (pair in tr.meshes)
+                let P = tr.gears.[pair.[0]];
+                    Q = tr.gears.[pair.[1]];
+                    pp = G.profile P;
+                    pq = G.profile Q;
+                    lip_max = max[P.gear.lip, Q.gear.lip];
+                    period = (tau/P.gear.z)/abs(rate[P, 0]);
+                in for (k in 0..<samples)
+                    let t = period*k/samples;
+                        c = S.clearance {
+                            fa: p -> pp.dist[p.[X], p.[Y], 0, t],
+                            fb: p -> pq.dist[p.[X], p.[Y], 0, t],
+                            ca: P.centre,
+                            cb: Q.centre,
+                            ra_a: P.gear.ra,
+                            ra_b: Q.gear.ra,
+                            m: m,
+                        };
+                    in exec(S.check [c >= s/lip_max - eps && c <= s + eps,
+                        "$(name): mesh $(pair) clearance $(c) at time $(t)"]);
+
+            // The train shape contains every body.
+            exec(S.check [tr.shape.is_3d, "$(name): the shape is not 3D"]);
+            for (g in tr.gears)
+                exec(S.check [contains_box [tr.shape.bbox, (G.body g).bbox],
+                    "$(name): shape bbox $(tr.shape.bbox) misses a body"]);
+        in #true;
+in do
+    for (cfg in configs) exec(check_config cfg);
+in #true

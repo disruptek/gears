@@ -1,0 +1,65 @@
+#!/usr/bin/env bash
+# Run every test program in tests/ (except support.curv), then compile
+# train.curv for the GPU. Exit with status 0 only if every step passes.
+
+set -u
+
+usage() {
+    echo "usage: run-tests [--curv PATH]"
+    echo "  --curv PATH  the curv binary to use (default: curv on PATH)"
+}
+
+curv=curv
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --curv)
+            [ $# -ge 2 ] || { usage >&2; exit 2; }
+            curv=$2
+            shift 2
+            ;;
+        -h|--help)
+            usage
+            exit 0
+            ;;
+        *)
+            echo "run-tests: unknown argument: $1" >&2
+            usage >&2
+            exit 2
+            ;;
+    esac
+done
+
+here=$(cd "$(dirname "$0")" && pwd)
+status=0
+
+report() {
+    # report NAME OK OUTPUT
+    if [ "$2" = yes ]; then
+        printf 'PASS %s\n' "$1"
+    else
+        printf 'FAIL %s\n' "$1"
+        printf '%s\n' "$3" | sed 's/^/    /'
+        status=1
+    fi
+}
+
+for test in "$here"/tests/*.curv; do
+    name=$(basename "$test" .curv)
+    [ "$name" = support ] && continue
+    out=$("$curv" "$test" 2>&1)
+    code=$?
+    if [ $code -eq 0 ] && [ "$(printf '%s' "$out" | tail -n 1)" = "#true" ]; then
+        report "$name" yes ""
+    else
+        report "$name" no "$out"
+    fi
+done
+
+out=$("$curv" -o gpu "$here/train.curv" 2>&1 >/dev/null)
+if [ $? -eq 0 ]; then
+    report "gpu-compile train.curv" yes ""
+else
+    report "gpu-compile train.curv" no "$out"
+fi
+
+exit $status

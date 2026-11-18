@@ -1,0 +1,80 @@
+// Helpers shared by the test programs in this directory.
+{
+    // Stop with `msg` unless `ok` is true. Otherwise return #true.
+    check [ok, msg] = if (ok) #true else error msg;
+
+    // True if a and b differ by at most tol.
+    near [a, b, tol] = abs(a - b) <= tol;
+
+    // Element i of a fixed sequence of numbers in [0, 1).
+    rand i = frac(sin(i*12.9898 + 78.233)*43758.5453);
+
+    // Minimum of the 2D function f over the box [lo, hi].
+    // A grid search with spacing h picks `seeds` start points.
+    // A pattern search from each start point refines down to step `tol`.
+    // Returns [value, point].
+    minimize {f, box: [lo, hi], h, tol, seeds} =
+        do
+            local nx = ceil((hi.[X] - lo.[X])/h);
+            local ny = ceil((hi.[Y] - lo.[Y])/h);
+            local pts = [for (i in 0..nx) for (j in 0..ny) lo + [i*h, j*h]];
+            local vals = [for (p in pts) f p];
+            local used = [];
+            local best = inf;
+            local best_p = lo;
+            local moves = [[1,0], [-1,0], [0,1], [0,-1],
+                           [1,1], [1,-1], [-1,1], [-1,-1]];
+            for (k in 1..seeds) (
+                local bi = 0;
+                local bv = inf;
+                for (i in indices vals)
+                    if (vals.[i] < bv && not(contains[used, i])) (
+                        bi := i;
+                        bv := vals.[i];
+                    );
+                used := [...used, bi];
+                local p = pts.[bi];
+                local v = bv;
+                local step = h;
+                while (step > tol) (
+                    local moved = #false;
+                    for (d in moves) (
+                        local q = p + d*step;
+                        local w = f q;
+                        if (w < v) (
+                            p := q;
+                            v := w;
+                            moved := #true;
+                        );
+                    );
+                    if (not moved) step := step/2;
+                );
+                if (v < best) (
+                    best := v;
+                    best_p := p;
+                );
+            );
+        in [best, best_p];
+
+    // Clearance between two gear profiles: the minimum of fa + fb over the
+    // lens where the tip circles of the two gears overlap.
+    // fa and fb map a world point [x,y] to a field value.
+    // ca and cb are the gear centres. ra_a and ra_b are the tip radii.
+    // m is the module, which sets the search resolution.
+    clearance {fa, fb, ca, cb, ra_a, ra_b, m} =
+        let a = mag(cb - ca);
+            e = (cb - ca)/a;
+            n = perp e;
+            x0 = (a*a + ra_a*ra_a - ra_b*ra_b)/(2*a);
+            hh = sqrt(max[ra_a*ra_a - x0*x0, 0]);
+            world [u, v] = ca + e*u + n*v;
+            sum_field uv = let p = world uv; in fa p + fb p;
+            result = minimize {
+                f: sum_field,
+                box: [[a - ra_b, -hh], [ra_a, hh]],
+                h: m/8,
+                tol: m*1e-6,
+                seeds: 4,
+            };
+        in result.[0];
+}
