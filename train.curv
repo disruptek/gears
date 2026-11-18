@@ -1,0 +1,22 @@
+// An animated two-stage involute spur gear train. See README.md.
+let
+    G = file "gear.curv";
+in
+parametric
+    module :: slider[0.5, 3] = 1.5;
+    teeth_a :: int_slider[18, 40] = 18;
+    teeth_b :: int_slider[18, 60] = 36;
+    teeth_c :: int_slider[18, 40] = 20;
+    teeth_d :: int_slider[18, 60] = 30;
+    backlash :: slider[0, 0.2] = 0.08;   // in modules
+    speed :: slider[-2, 2] = 0.6;        // radians per second
+    elbow :: slider[40, 140] = 75;       // degrees
+in
+(G.train {
+    m: module,
+    teeth: [teeth_a, teeth_b, teeth_c, teeth_d],
+    backlash: backlash*module,
+    speed: speed,
+    elbow: elbow*deg,
+    width: 4*module,
+}).shape

@@ -1,0 +1,180 @@
+// Involute spur gears as signed distance fields.
+// README.md specifies the geometry, the field and its contract.
+//
+// No field below branches on a value that a slider may change: the shape
+// compiler must accept every field inside a parametric shape. Where a
+// choice is needed, min, max and sign do the work.
+{
+    // The involute function.
+    inv a = tan a - a;
+
+    // The geometry and the polar field of one gear, in the gear's frame.
+    // Tooth 0 is centred on the +X axis.
+    spur {m, z, alpha = 20*deg, backlash = 0} =
+        let rp = m*z/2;
+            rb = rp*cos alpha;
+            ra = rp + m;
+            rf = rp - 1.25*m;
+            psi_p = (pi*m/2 - backlash/2)/(2*rp);
+            psi_b = psi_p + inv alpha;
+            lip = sqrt(1 + (pi/z)^2);
+            half_pitch = pi/z;
+            pitch = tau/z;
+            field [r, psi] =
+                let // Fold the angle into tooth 0, upper flank.
+                    u = abs(mod[psi + half_pitch, pitch] - half_pitch);
+                    // Above the base circle: involute level sets, exact.
+                    // Below it: the radial line at psi_b, gradient <= lip.
+                    big_r = max[r, rb];
+                    flank = (min[r, rb]*(u - psi_b) + rb*inv(acos(rb/big_r)))/lip;
+                in min[max[flank, r - ra], r - rf];
+        in {
+            m: m, z: z, alpha: alpha, backlash: backlash,
+            rp: rp, rb: rb, ra: ra, rf: rf,
+            psi_p: psi_p, psi_b: psi_b, lip: lip,
+            field: field,
+        };
+
+    // A gear placed in the world: centre, rotation over time, layer, bore.
+    // The derived fields size the hub, the rim and the lightening holes.
+    place {gear, centre, angle, z0, width, bore} =
+        let hub = bore/2 + 1.5*gear.m;
+            rim = gear.rf - 2*gear.m;
+            hole_ring = (hub + rim)/2;
+            hole_d = max[0, min[0.85*(rim - hub), 0.7*hole_ring]];
+        in {
+            gear: gear, centre: centre, angle: angle,
+            z0: z0, width: width, bore: bore,
+            hub: hub, rim: rim, hole_ring: hole_ring, hole_d: hole_d,
+        };
+
+    // A gear that meshes with the placed gear `driver`. Both gears must have
+    // the same module and pressure angle. The centre distance is the sum of
+    // the pitch radii. The angle follows the phasing rule in README.md.
+    mesh {driver, gear, direction, z0, width, bore} =
+        let z1 = driver.gear.z;
+            z2 = gear.z;
+            centre = driver.centre + (driver.gear.rp + gear.rp)*cis direction;
+            angle t = direction + pi - pi/z2 + (direction - driver.angle t)*z1/z2;
+        in place {
+            gear: gear, centre: centre, angle: angle,
+            z0: z0, width: width, bore: bore,
+        };
+
+    // A gear on the same shaft as `base`: same centre, angle and bore.
+    coaxial {base, gear, z0, width} =
+        place {
+            gear: gear, centre: base.centre, angle: base.angle,
+            z0: z0, width: width, bore: base.bore,
+        };
+
+    // The polar coordinates [r, psi] of the world point [x, y] in the frame
+    // of a gear with centre [cx, cy], turned by the angle a.
+    //
+    // The dist functions below call this with numbers only. The shape
+    // compiler cannot pass a record of slider values into GPU code, so each
+    // shape unpacks its placed gear into numbers and functions first.
+    to_polar [x, y, cx, cy, a] =
+        let d = [x - cx, y - cy];
+        in [mag d, phase d - a];
+
+    // The teeth of a placed gear as a 2D shape that turns with time.
+    profile pg =
+        let cx = pg.centre.[X];
+            cy = pg.centre.[Y];
+            angle = pg.angle;
+            field = pg.gear.field;
+            ra = pg.gear.ra;
+        in make_shape {
+            dist [x, y, _, t] = field(to_polar [x, y, cx, cy, angle t]),
+            bbox = [[cx - ra, cy - ra, 0], [cx + ra, cy + ra, 0]],
+            is_2d = true,
+        };
+
+    // The 3D body of a placed gear: the teeth minus the bore and the holes,
+    // extruded over the gear's layer with the exact extrusion formula.
+    // Each cut is max[f, -cut], which keeps the field 1-Lipschitz.
+    body pg =
+        let cx = pg.centre.[X];
+            cy = pg.centre.[Y];
+            angle = pg.angle;
+            field = pg.gear.field;
+            ra = pg.gear.ra;
+            bore_r = pg.bore/2;
+            hole_r = pg.hole_d/2;
+            ring = pg.hole_ring;
+            // With hole_d == 0, push the hole cut far below zero, so that
+            // not even the hole centre point is removed.
+            no_holes = (1 - sign(pg.hole_d))*4*ra;
+            half = pg.width/2;
+            zc = pg.z0 + half;
+        in make_shape {
+            dist [x, y, z, t] =
+                let p = to_polar [x, y, cx, cy, angle t];
+                    r = p.[0];
+                    // Fold into the sector of hole 0, which is centred on +X.
+                    u = mod[p.[1] + pi/6, tau/6] - pi/6;
+                    hole_cut = hole_r - mag[r*cos u - ring, r*sin u] - no_holes;
+                    d2 = max[field p, bore_r - r, hole_cut];
+                    dz = abs(z - zc) - half;
+                in mag(max[[d2, dz], 0]) + min[max[d2, dz], 0],
+            bbox = [[cx - ra, cy - ra, pg.z0],
+                    [cx + ra, cy + ra, pg.z0 + pg.width]],
+            is_3d = true,
+        };
+
+    // The two-stage compound train described in README.md.
+    train {m, teeth: [za, zb, zc, zd], backlash, speed, elbow, width} =
+        let gear z = spur {m: m, z: z, backlash: backlash};
+            bore = 2*m;
+            layer2 = width + m;
+
+            A = place {
+                gear: gear za, centre: [0, 0], angle: t -> speed*t,
+                z0: 0, width: width, bore: bore,
+            };
+            B = mesh {
+                driver: A, gear: gear zb, direction: 0,
+                z0: 0, width: width, bore: bore,
+            };
+            C = coaxial {base: B, gear: gear zc, z0: layer2, width: width};
+            D = mesh {
+                driver: C, gear: gear zd, direction: elbow,
+                z0: layer2, width: width, bore: bore,
+            };
+            gears = [A, B, C, D];
+            meshes = [[0, 1], [2, 3]];
+            mate = [1, 0, 3, 2];
+
+            palette = [
+                sRGB.hex "C9A227",   // brass
+                sRGB.hex "4A86B8",   // steel blue
+                sRGB.hex "B8574A",   // brick
+                sRGB.hex "5E9E5A",   // green
+            ];
+            glow = sRGB.hex "FFF4C8";
+
+            // Brighten the surface where it comes within m/4 of the mate.
+            coloured i =
+                let other = profile (gears.[mate.[i]]);
+                    base = palette.[i];
+                in body (gears.[i]) >> colour ([x, y, _, t] ->
+                    lerp[glow, base, smoothstep[0, m/4, other.dist[x, y, 0, t]]]);
+
+            // A shaft through the layers [z_lo, z_hi], with stubs of length m.
+            shaft [centre, z_lo, z_hi] =
+                cylinder {d: 0.9*bore, h: z_hi - z_lo + 2*m}
+                >> move [centre.[X], centre.[Y], (z_lo + z_hi)/2]
+                >> colour (sRGB.hex "8A8F96");
+            shafts = [
+                shaft [A.centre, A.z0, A.z0 + width],
+                shaft [B.centre, B.z0, C.z0 + width],
+                shaft [D.centre, D.z0, D.z0 + width],
+            ];
+        in {
+            gears: gears,
+            meshes: meshes,
+            ratio: za*zc/(zb*zd),
+            shape: union [...shafts, for (i in 0..3) coloured i],
+        };
+}
