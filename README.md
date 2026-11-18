@@ -11,7 +11,7 @@ the geometry numerically through the `curv` command.
 |------|----------|
 | `gear.curv` | Library: gear geometry, distance fields, placement, meshing, the train builder. |
 | `train.curv` | The parametric, animated demo. |
-| `tests/support.curv` | Test helpers: checks, a deterministic number sequence, minimum search. |
+| `tests/support.curv` | Test helpers: checks, a deterministic number sequence, boundary sampling, clearance. |
 | `tests/*.curv` | One test program per topic. Each evaluates to `#true` or stops with an error. |
 | `run-tests` | Runs every test program and the GPU compile check. |
 
@@ -208,8 +208,8 @@ compiles `train.curv` for the GPU with `curv -o gpu`. It exits with status
 0 only if every step passes.
 
 `tests/instruments.curv`
-: `minimize` and `clearance` from `support.curv` give the known answers for
-  circles. The circle fields include fields that understate the distance,
+: `boundary_point` and `clearance` from `support.curv` give the known
+  answers for circles. The circle fields include fields that understate the distance,
   as the gear fields may. A failure here means that the measurement is
   wrong, not the gears.
 
