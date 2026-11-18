@@ -9,72 +9,78 @@
     // Element i of a fixed sequence of numbers in [0, 1).
     rand i = frac(sin(i*12.9898 + 78.233)*43758.5453);
 
-    // Minimum of the 2D function f over the box [lo, hi].
-    // A grid search with spacing h picks `seeds` start points.
-    // A pattern search from each start point refines down to step `tol`.
-    // Returns [value, point].
-    minimize {f, box: [lo, hi], h, tol, seeds} =
+    // The point where the ray from c at angle a crosses the boundary of the
+    // shape with field f. The ray must cross the boundary exactly once
+    // between radius r_in (inside) and radius r_out (outside).
+    boundary_point [f, c, a, r_in, r_out] =
         do
-            local nx = ceil((hi.[X] - lo.[X])/h);
-            local ny = ceil((hi.[Y] - lo.[Y])/h);
-            local pts = [for (i in 0..nx) for (j in 0..ny) lo + [i*h, j*h]];
-            local vals = [for (p in pts) f p];
-            local used = [];
-            local best = inf;
-            local best_p = lo;
-            local moves = [[1,0], [-1,0], [0,1], [0,-1],
-                           [1,1], [1,-1], [-1,1], [-1,-1]];
-            for (k in 1..seeds) (
-                local bi = 0;
-                local bv = inf;
-                for (i in indices vals)
-                    if (vals.[i] < bv && not(contains[used, i])) (
-                        bi := i;
-                        bv := vals.[i];
-                    );
-                used := [...used, bi];
-                local p = pts.[bi];
-                local v = bv;
-                local step = h;
-                while (step > tol) (
-                    local moved = #false;
-                    for (d in moves) (
-                        local q = p + d*step;
-                        local w = f q;
-                        if (w < v) (
-                            p := q;
-                            v := w;
-                            moved := #true;
-                        );
-                    );
-                    if (not moved) step := step/2;
-                );
-                if (v < best) (
-                    best := v;
-                    best_p := p;
-                );
+            local e = cis a;
+            local lo = r_in;
+            local hi = r_out;
+            for (k in 1..44) (
+                local mid = (lo + hi)/2;
+                if (f(c + e*mid) < 0) lo := mid else hi := mid;
             );
-        in [best, best_p];
+        in c + e*((lo + hi)/2);
 
-    // Clearance between two gear profiles: the minimum of fa + fb over the
-    // lens where the tip circles of the two gears overlap.
-    // fa and fb map a world point [x,y] to a field value.
-    // ca and cb are the gear centres. ra_a and ra_b are the tip radii.
-    // m is the module, which sets the search resolution.
+    // The smallest value of g on the boundary of the shape with field f,
+    // over `rays` rays from c within `span` of the angle `dir`. A
+    // golden-section search refines the best ray against its neighbours.
+    boundary_min {f, g, c, dir, span, r_in, r_out, rays} =
+        do
+            local value a = g(boundary_point [f, c, a, r_in, r_out]);
+            local best = inf;
+            local best_a = dir;
+            for (i in 0..rays)
+                let a = dir - span + 2*span*i/rays;
+                    v = value a;
+                in if (v < best) (
+                    best := v;
+                    best_a := a;
+                );
+            local k = (sqrt 5 - 1)/2;
+            local lo = best_a - 2*span/rays;
+            local hi = best_a + 2*span/rays;
+            local x1 = hi - k*(hi - lo);
+            local x2 = lo + k*(hi - lo);
+            local v1 = value x1;
+            local v2 = value x2;
+            for (i in 1..40)
+                if (v1 < v2) (
+                    hi := x2;
+                    x2 := x1;
+                    v2 := v1;
+                    x1 := hi - k*(hi - lo);
+                    v1 := value x1;
+                ) else (
+                    lo := x1;
+                    x1 := x2;
+                    v1 := v2;
+                    x2 := lo + k*(hi - lo);
+                    v2 := value x2;
+                );
+        in min[best, v1, v2];
+
+    // Clearance between two shapes that are star-shaped around their centres
+    // ca and cb, such as two gear profiles: the smallest value of either
+    // field on the other shape's boundary, inside the lens where the two
+    // outer circles (radii ra_a and ra_b) overlap. A negative value means
+    // overlap. fa and fb map a world point [x,y] to a field value. m sets
+    // the ray spacing and the bisection range; for a gear it is the module.
     clearance {fa, fb, ca, cb, ra_a, ra_b, m} =
         let a = mag(cb - ca);
-            e = (cb - ca)/a;
-            n = perp e;
-            x0 = (a*a + ra_a*ra_a - ra_b*ra_b)/(2*a);
-            hh = sqrt(max[ra_a*ra_a - x0*x0, 0]);
-            world [u, v] = ca + e*u + n*v;
-            sum_field uv = let p = world uv; in fa p + fb p;
-            result = minimize {
-                f: sum_field,
-                box: [[a - ra_b, -hh], [ra_a, hh]],
-                h: m/8,
-                tol: m*1e-6,
-                seeds: 4,
-            };
-        in result.[0];
+            dir = phase(cb - ca);
+            // Half-angle of the lens, seen from a centre with radius r1.
+            span [r1, r2] =
+                acos(clamp[(a*a + r1*r1 - r2*r2)/(2*a*r1), -1, 1]) + 0.02;
+            side [f, g, c, d, r1, r2] =
+                let sp = span [r1, r2];
+                in boundary_min {
+                    f: f, g: g, c: c, dir: d, span: sp,
+                    r_in: r1 - 2.5*m,
+                    r_out: r1 + m/2,
+                    rays: ceil(r1*2*sp/(m/30)),
+                };
+        in min[side [fa, fb, ca, dir, ra_a, ra_b],
+               side [fb, fa, cb, dir + pi, ra_b, ra_a]];
 }

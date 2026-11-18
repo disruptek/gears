@@ -50,7 +50,7 @@ let
             for (t in times)
                 for (k in 0..23)
                     let a = k*tau/24;
-                    in do
+                    in (
                         // The bore is empty.
                         for (r in [0, c.bore/4, c.bore/2*0.98])
                             exec(S.check [at[...(r*cis a), zmid, t] > 0,
@@ -63,7 +63,7 @@ let
                         for (r in [rim*1.005, (rim + g.rf)/2, g.rf*0.99])
                             exec(S.check [at[...(r*cis a), zmid, t] < 0,
                                 "$(name): rim point r=$(r) a=$(a) t=$(t) is empty"]);
-                    in #true;
+                    );
 
             // The holes: empty at their centres when hole_d > 0.
             // Without holes, the hole ring is solid.

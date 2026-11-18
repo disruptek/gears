@@ -38,7 +38,11 @@ let
             psi_p = (pi*c.m/2 - c.j/2)/(2*rp);
             psi_b = psi_p + inv alpha;
             lip = sqrt(1 + (pi/c.z)^2);
+            // The involute is on the profile from max[rb, rf] to ra: the
+            // root circle cuts it when rf > rb.
+            s_min = sqrt(max[rb, rf]^2 - rb*rb)/rb;
             s_max = sqrt(ra*ra - rb*rb)/rb;
+            roll k n = s_min + (s_max - s_min)*k/n;
             centre = [3, -2];
             pg = G.place {
                 gear: g,
@@ -63,7 +67,7 @@ let
 
             // Both flanks of tooth 0 lie on the zero set.
             for (k in 0..24)
-                let q = flank_point [rb, psi_b, s_max*k/24];
+                let q = flank_point [rb, psi_b, roll k 24];
                     v1 = g.field(polar q);
                     v2 = g.field(polar(mirror_y q));
                 in exec(S.check [abs v1 < ftol && abs v2 < ftol,
@@ -87,7 +91,7 @@ let
             for (tooth in [0, 1, floor(c.z/2), c.z - 1])
                 for (time in [0, 1.7, 5.2])
                     for (k in 0..6)
-                        let q = flank_point [rb, psi_b, s_max*k/6];
+                        let q = flank_point [rb, psi_b, roll k 6];
                             turn = pg.angle time + tooth*tau/c.z;
                         in for (side in [q, mirror_y q])
                             let w = centre + rot[turn, side];
