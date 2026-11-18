@@ -205,6 +205,10 @@ passes if `curv` exits with status 0 and prints `#true`. `run-tests` then
 compiles `train.curv` for the GPU with `curv -o gpu`. It exits with status
 0 only if every step passes.
 
+`tests/instruments.curv`
+: `minimize` and `clearance` from `support.curv` give the known answers for
+  circles. A failure here means that the measurement is wrong, not the gears.
+
 `tests/geometry.curv`
 : The radii match the formulas. Points on the involute, computed from the
   textbook parametric form, have `abs(field) < 1e-9*m`. The tooth tip, the
